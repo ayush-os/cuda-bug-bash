@@ -2,66 +2,84 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-__global__ void reduce_sum(float *input, float *output, int n)
+struct Vector3
 {
-    __shared__ float sdata[256];
-    int tid = threadIdx.x;
+    float x, y, z;
+};
+
+__global__ void vector_magnitude(Vector3 *vectors, float *result, int n)
+{
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    sdata[tid] = (idx < n) ? input[idx] : 0.0f;
-
-    for (int s = blockDim.x / 2; s > 0; s >>= 1)
+    if (idx < n)
     {
-        if (tid < s)
-        {
-            sdata[tid] += sdata[tid + s];
-        }
-        __syncthreads();
-    }
-
-    if (tid == 0)
-    {
-        output[blockIdx.x] = sdata[0];
+        Vector3 v = vectors[idx];
+        result[idx] = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
     }
 }
 
 int main()
 {
-    const int n = 10000;
+    const int n = 1 << 24;
     const int threads = 256;
     const int blocks = (n + threads - 1) / threads;
 
-    float *h_input = (float *)malloc(n * sizeof(float));
-    float *h_output = (float *)malloc(blocks * sizeof(float));
+    Vector3 *h_vectors = (Vector3 *)malloc(n * sizeof(Vector3));
+    float *h_result = (float *)malloc(n * sizeof(float));
 
     for (int i = 0; i < n; i++)
     {
-        h_input[i] = 1.0f;
+        h_vectors[i].x = 1.0f;
+        h_vectors[i].y = 2.0f;
+        h_vectors[i].z = 3.0f;
     }
 
-    float *d_input, *d_output;
-    cudaMalloc(&d_input, n * sizeof(float));
-    cudaMalloc(&d_output, blocks * sizeof(float));
+    Vector3 *d_vectors;
+    float *d_result;
+    cudaMalloc(&d_vectors, n * sizeof(Vector3));
+    cudaMalloc(&d_result, n * sizeof(float));
 
-    cudaMemcpy(d_input, h_input, n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_vectors, h_vectors, n * sizeof(Vector3), cudaMemcpyHostToDevice);
 
-    reduce_sum<<<blocks, threads>>>(d_input, d_output, n);
+    vector_magnitude<<<blocks, threads>>>(d_vectors, d_result, n);
+    cudaDeviceSynchronize();
 
-    cudaMemcpy(h_output, d_output, blocks * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
-    float total = 0.0f;
-    for (int i = 0; i < blocks; i++)
+    cudaEventRecord(start);
+    for (int i = 0; i < 100; i++)
     {
-        total += h_output[i];
+        vector_magnitude<<<blocks, threads>>>(d_vectors, d_result, n);
     }
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
 
-    printf("Expected: %f, Got: %f\n", (float)n, total);
-    printf("%s\n", (fabs(total - n) < 0.1) ? "PASSED" : "FAILED");
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
 
-    free(h_input);
-    free(h_output);
-    cudaFree(d_input);
-    cudaFree(d_output);
+    float bytes = (sizeof(Vector3) + sizeof(float)) * n * 100;
+    float bandwidth = bytes / (milliseconds / 1000.0f) / 1e9;
+
+    printf("Time: %f ms\n", milliseconds / 100);
+    printf("Bandwidth: %f GB/s\n", bandwidth);
+
+    cudaDeviceProp prop;
+    cudaGetDeviceProperties(&prop, 0);
+    float theoretical_bw = 2.0f * prop.memoryClockRate * (prop.memoryBusWidth / 8) / 1.0e6;
+    printf("Theoretical: %f GB/s\n", theoretical_bw);
+    printf("Efficiency: %.1f%%\n", (bandwidth / theoretical_bw) * 100);
+
+    cudaMemcpy(h_result, d_result, n * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float expected = sqrtf(1.0f + 4.0f + 9.0f);
+    printf("Correctness: %s\n", (fabs(h_result[0] - expected) < 0.01) ? "PASSED" : "FAILED");
+
+    free(h_vectors);
+    free(h_result);
+    cudaFree(d_vectors);
+    cudaFree(d_result);
 
     return 0;
 }
