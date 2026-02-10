@@ -1,7 +1,8 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-__global__ void kernel_a(float *input, float *output, int n)
+__global__ void reduce_sum(float *input, float *output, int n)
 {
     __shared__ float sdata[256];
     int tid = threadIdx.x;
@@ -13,9 +14,9 @@ __global__ void kernel_a(float *input, float *output, int n)
     }
     __syncthreads();
 
-    for (int s = 1; s < blockDim.x; s *= 2)
+    for (int s = blockDim.x / 2; s > 0; s >>= 1)
     {
-        if (tid % (2 * s) == 0)
+        if (tid < s)
         {
             sdata[tid] += sdata[tid + s];
         }
@@ -23,19 +24,20 @@ __global__ void kernel_a(float *input, float *output, int n)
     }
 
     if (tid == 0)
+    {
         output[blockIdx.x] = sdata[0];
+    }
 }
 
 int main()
 {
-    const int n = 1000;
+    const int n = 10000;
     const int threads = 256;
     const int blocks = (n + threads - 1) / threads;
 
-    float *h_input = new float[n];
-    float *h_output = new float[blocks];
+    float *h_input = (float *)malloc(n * sizeof(float));
+    float *h_output = (float *)malloc(blocks * sizeof(float));
 
-    // Initialize input
     for (int i = 0; i < n; i++)
     {
         h_input[i] = 1.0f;
@@ -47,11 +49,10 @@ int main()
 
     cudaMemcpy(d_input, h_input, n * sizeof(float), cudaMemcpyHostToDevice);
 
-    kernel_a<<<blocks, threads>>>(d_input, d_output, n);
+    reduce_sum<<<blocks, threads>>>(d_input, d_output, n);
 
     cudaMemcpy(h_output, d_output, blocks * sizeof(float), cudaMemcpyDeviceToHost);
 
-    // Verify result
     float total = 0.0f;
     for (int i = 0; i < blocks; i++)
     {
@@ -59,18 +60,10 @@ int main()
     }
 
     printf("Expected: %f, Got: %f\n", (float)n, total);
+    printf("%s\n", (fabs(total - n) < 0.1) ? "PASSED" : "FAILED");
 
-    if (fabs(total - n) < 1e-3)
-    {
-        printf("PASSED\n");
-    }
-    else
-    {
-        printf("FAILED\n");
-    }
-
-    delete[] h_input;
-    delete[] h_output;
+    free(h_input);
+    free(h_output);
     cudaFree(d_input);
     cudaFree(d_output);
 
