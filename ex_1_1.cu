@@ -11,7 +11,7 @@ __global__ void kernel_a(float *input, float *output, int n)
     {
         sdata[tid] = input[idx];
     }
-    // Missing initialization for out-of-bounds threads
+    __syncthreads();
 
     for (int s = 1; s < blockDim.x; s *= 2)
     {
