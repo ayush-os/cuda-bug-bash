@@ -8,6 +8,7 @@ __global__ void reduce_sum(float* input, float* output, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
     sdata[tid] = (idx < n) ? input[idx] : 0.0f;
+    __syncthreads();
     
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
         if (tid < s) {
