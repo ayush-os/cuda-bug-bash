@@ -7,8 +7,11 @@ __global__ void kernel_a(float *input, float *output, int n)
     int tid = threadIdx.x;
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    sdata[tid] = (idx < n) ? input[idx] : 0.0f;
-    __syncthreads();
+    if (idx < n)
+    {
+        sdata[tid] = input[idx];
+    }
+    // Missing initialization for out-of-bounds threads
 
     for (int s = 1; s < blockDim.x; s *= 2)
     {
@@ -25,7 +28,7 @@ __global__ void kernel_a(float *input, float *output, int n)
 
 int main()
 {
-    const int n = 1024;
+    const int n = 1000;
     const int threads = 256;
     const int blocks = (n + threads - 1) / threads;
 
